@@ -11,9 +11,7 @@
   :root{
     --bg:#0b0b0f;--card:#151821;--text:#e8eef6;--muted:#5c6e83;--acc:#48d1b5;--red:#ff7575;--input:#0f1218;--border:#23304a;
     --p:#2aa1ff;--f:#ffb454;--c:#48d1b5;
-    --axis:rgba(255,255,255,.9);--grid:rgba(255,255,255,.12);--axisLine:rgba(255,255,255,.35);
-    /* ▼ 追加：上品なブラー量（必要なら3.5〜4.5で微調整） */
-    --chart-blur:4px;
+    --axis:rgba(255,255,255,.9);--grid:rgba(255,255,255,.12);--axisLine:rgba(255,255,255,.35)
   }
   .light{
     --bg:#f6f8fb;--card:#ffffff;--text:#1a2732;--muted:#5c6e83;--acc:#0aa37f;--red:#d13b3b;--input:#ffffff;--border:#dfe8f2;
@@ -81,15 +79,8 @@
   .light .footerNote{color:#000 !important}
   .footerNote a{color:var(--p);text-decoration:underline}
 
-  /* ▼ 新モザイク見た目：CSSブラー（上品で圧迫感なし） */
-  .blurTxt{
-    filter: blur(4px) saturate(0.96) contrast(0.96) brightness(1.02);
-    pointer-events:none;
-    user-select:none;
-  }
-  .softBlur{
-    filter: blur(var(--chart-blur)) saturate(0.96) contrast(0.96) brightness(1.02);
-  }
+  /* ▼ グラフを読めない“モザイク＋ぼかし”にするための見た目（補助） */
+  #wtChart.mosaicCanvas{ filter: blur(2px); image-rendering: pixelated; }
 </style>
 </head>
 <body>
@@ -286,8 +277,8 @@
             <button data-months="12">12ヶ月</button>
           </div>
         </div>
-        <!-- ▼ キャンバスに“柔らかいブラー”を適用して不可読化 -->
-        <canvas id="wtChart" class="softBlur" height="260" aria-label="体重推移グラフ（ぼかし適用）" role="img"></canvas>
+        <!-- モザイク化対象 -->
+        <canvas id="wtChart" class="mosaicCanvas" height="260" aria-label="体重推移グラフ（モザイク処理済み）" role="img"></canvas>
       </div>
     </section>
   </div>
@@ -300,6 +291,12 @@
 
 <script>
 const $ = id => document.getElementById(id);
+
+/* ===== モザイク設定（ここで有効/強度を管理） ===== */
+const CHART_MOSAIC_ENABLED = true;     // ← 必ずモザイクを掛ける
+const MOSAIC_BLOCK_SIZE_MIN = 6;       // 最小ブロック
+const MOSAIC_BLOCK_SIZE_SCALE = 120;   // キャンバス幅 / この値 ≒ ブロック辺
+const EXTRA_BLUR_PX = 1.5;             // 仕上げブラー（キャンバス描画内で適用）
 
 /* ユーティリティ */
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
@@ -442,7 +439,60 @@ function classText(bmi){
 }
 const KCAL_PER_100G = { meat:280, fish:150, eggs:150, dairy:160, veg:30, fruit:60 };
 
-/* ===== グラフ（通常描画のみ。不可読化はCSS .softBlur で適用） ===== */
+/* NaN安全化：動物性バイアス含む分配 */
+function splits6By(diet, carbSel, fitnessType, onoff){
+  const sel = Number.isFinite(+carbSel) ? +carbSel : 30;
+  const level = (sel<=30)?30:(sel<=50)?50:70;
+  let s = { meat:0.62, fish:0.10, eggs:0.12, dairy:0.10, veg:0.04, fruit:0.02 };
+  if(diet==="Carnivore"){ s = { meat:0.66, fish:0.12, eggs:0.14, dairy:0.08, veg:0.00, fruit:0.00 }; }
+  else if(diet==="Ketovore"){
+    if(level===30) s = { meat:0.60, fish:0.11, eggs:0.11, dairy:0.10, veg:0.06, fruit:0.02 };
+    if(level===50) s = { meat:0.56, fish:0.11, eggs:0.11, dairy:0.10, veg:0.10, fruit:0.02 };
+    if(level===70) s = { meat:0.52, fish:0.11, eggs:0.10, dairy:0.10, veg:0.13, fruit:0.04 };
+  } else {
+    if(level===30) s = { meat:0.58, fish:0.11, eggs:0.11, dairy:0.10, veg:0.08, fruit:0.02 };
+    if(level===50) s = { meat:0.54, fish:0.11, eggs:0.10, dairy:0.10, veg:0.12, fruit:0.03 };
+    if(level===70) s = { meat:0.50, fish:0.11, eggs:0.10, dairy:0.10, veg:0.15, fruit:0.04 };
+  }
+  if(onoff==="on"){
+    if(["run","cycle","aerobic","club"].includes(fitnessType)){ s.fish+=0.02; s.veg+=0.02; s.fruit+=0.02; s.meat-=0.04; }
+    else if(["strength","anaerobic","martial"].includes(fitnessType)){ s.meat+=0.03; s.eggs+=0.02; s.dairy+=0.01; s.veg-=0.03; s.fruit-=0.02; }
+  } else if(onoff==="off"){ s.dairy+=0.02; s.meat-=0.02; }
+  const sum = Object.values(s).reduce((a,b)=>a+b,0)||1; for(const k in s){ s[k]=Math.max(0,s[k]/sum); } return s;
+}
+
+/* ▼ 電解質計算 */
+function estimateElectrolytes(habit, fitnessType, currentCarb, w, age){
+  const af = parseFloat(habit)||1.2;
+  const scaleAF = clamp((af - 1.2) / (1.9 - 1.2), 0, 1);
+  const isCardio = ["run","cycle","aerobic","club"].includes(fitnessType);
+  const isPower  = ["strength","anaerobic","martial"].includes(fitnessType);
+
+  // Na
+  let na = 4000;
+  if(currentCarb <= 130) na += 600;
+  na += Math.round(300 * scaleAF);
+  na += isCardio ? 60 : isPower ? 30 : 0;
+  na += Math.round(clamp(w - 60, -20, 40) * 3);
+
+  // K
+  let k = 3500;
+  k += Math.round(220 * scaleAF);
+  k += isCardio ? 120 : isPower ? 80 : 0;
+  k += Math.round((w - 60) * 10);
+  if(age >= 50) k += Math.round((age - 50) * 2);
+
+  // Mg
+  let mg = 400;
+  if(af >= 1.55) mg += 50;
+  mg += Math.round(20 * scaleAF);
+  mg += isCardio ? 8 : isPower ? 12 : 0;
+
+  return { k: Math.max(0, Math.round(k)), na: Math.max(0, Math.round(na)), mg: Math.max(0, Math.round(mg)) };
+}
+/* ▲ 電解質計算ここまで */
+
+/* ===== グラフ（描画→モザイク化） ===== */
 function fitCanvasDPR(canvas){
   const dpr = Math.max(1, window.devicePixelRatio||1);
   const rect = canvas.getBoundingClientRect();
@@ -460,6 +510,43 @@ document.addEventListener('click',(e)=>{
   if(window._lastDrawArgs) drawWeightChart({...window._lastDrawArgs, months:chartMonths});
 });
 function seededNoise(n){ return Math.sin(n*1.7)*0.6 + Math.sin(n*0.37)*0.4; }
+
+/* キャンバス内容を“モザイク＋ぼかし”に変換 */
+function applyMosaic(canvas){
+  if(!CHART_MOSAIC_ENABLED) return;
+  const w = canvas.width, h = canvas.height;
+  const ctx = canvas.getContext('2d');
+  // 縮小用オフスクリーン
+  const tmp = document.createElement('canvas');
+  const block = Math.max(MOSAIC_BLOCK_SIZE_MIN, Math.round(w / MOSAIC_BLOCK_SIZE_SCALE));
+  tmp.width = Math.max(1, Math.floor(w / block));
+  tmp.height = Math.max(1, Math.floor(h / block));
+  const tctx = tmp.getContext('2d');
+  // 1) 縮小（情報を潰す）
+  tctx.imageSmoothingEnabled = false;
+  tctx.clearRect(0,0,tmp.width,tmp.height);
+  tctx.drawImage(canvas, 0, 0, tmp.width, tmp.height);
+  // 2) 再拡大（ピクセルを大きく）
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0,0,w,h);
+  ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, w, h);
+  // 3) 仕上げの軽いブラー（さらに読めなくする）
+  if(EXTRA_BLUR_PX > 0){
+    try{
+      // CSSフィルタは要素単位なので、キャンバス内でガウシアン風ブラーを近似
+      // 簡易的に2回の縮小→拡大で擬似ブラー
+      const tmp2 = document.createElement('canvas');
+      tmp2.width = Math.max(1, Math.floor(w / (block*2)));
+      tmp2.height = Math.max(1, Math.floor(h / (block*2)));
+      const t2 = tmp2.getContext('2d');
+      t2.imageSmoothingEnabled = true;
+      t2.drawImage(canvas, 0, 0, tmp2.width, tmp2.height);
+      ctx.clearRect(0,0,w,h);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(tmp2, 0, 0, tmp2.width, tmp2.height, 0, 0, w, h);
+    }catch(_){}
+  }
+}
 
 function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, isCut}){
   const cvs = $("wtChart"); fitCanvasDPR(cvs);
@@ -503,7 +590,7 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
   ctx.beginPath(); ctx.moveTo(padL, yTo(minY)); ctx.lineTo(W-padR, yTo(minY)); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(padL, yTo(minY)); ctx.lineTo(padL, padT); ctx.stroke();
 
-  // 目盛ラベル
+  // 目盛ラベル（※描くが最終的にモザイクで読めなくなる）
   ctx.fillStyle=getComputedStyle(document.body).getPropertyValue('--axis').trim();
   ctx.font=`${Math.round(W/60)+11}px system-ui`;
   const ticks = months<=1? [0,7,14,21,30] : months<=3? [0,30,60,90] : months<=6? [0,60,120,180] : [0,90,180,270,360];
@@ -539,7 +626,9 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
   xs.forEach((m,i)=>{ const xx=xTo(m), yy=yTo(ys[i]); ctx.beginPath(); ctx.arc(xx,yy,2.5,0,Math.PI*2); ctx.fill(); });
   ctx.restore();
 
-  // ※ 旧：applyMosaic(cvs) は廃止。CSS .softBlur で不可読化。
+  // 描画後にモザイク化（軸・文字も含め不可視化）
+  applyMosaic(cvs);
+
   window._lastDrawArgs = {startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, isCut};
 }
 let _resizeId;
@@ -556,7 +645,7 @@ function updateBars(pk, fk, ck, total){
   $("pbar").style.width=p+"%"; $("fbar").style.width=f+"%"; $("cbar").style.width=c+"%";
 }
 function updateFoodBars(parts, total){
-  const bars={meat:"meatbar",fish:"fishbar",eggs:"eggsbar",dairy:"dairybar"};
+  const bars={meat:"meatbar",fish:"fishbar",eggs:"eggsbar",dairy:"dairybar",veg:"vegbar",fruit:"fruitbar"};
   Object.keys(bars).forEach(k=>{
     const v = total? Math.min(100, Math.round((parts[k]/total)*100)) : 0;
     $(bars[k]).style.width = v+"%";
@@ -741,33 +830,11 @@ function calc(){
   $("gVeg").textContent   = (diet==="Carnivore"?0:Math.round((kVeg  /KCAL_PER_100G.veg  *100)/10)*10); $("kVeg").textContent   = Math.round(kVeg);
   $("gFruit").textContent = (diet==="Carnivore"?0:Math.round((kFruit/KCAL_PER_100G.fruit*100)/10)*10); $("kFruit").textContent = Math.round(kFruit);
 
-  updateFoodBars({meat:kMeat,fish:kFish,eggs:kEggs,dairy:kDairy},kcal);
+  updateFoodBars({meat:kMeat,fish:kFish,eggs:kEggs,dairy:kDairy,veg:kVeg,fruit:kFruit},kcal);
   updateBars(pk, fk, ck, kcal);
 
   const targetKg = (goal!=="maintain" && +$("targetWeight").value>0) ? +$("targetWeight").value : null;
   drawWeightChart({startKg:w,targetKg,months:chartMonths,dailyDeltaKcal:(kcal-tdee),kcalPerKg:7700,isCut:(goal==="cut")});
-}
-
-/* 動物性バイアス含む配分（元のまま） */
-function splits6By(diet, carbSel, fitnessType, onoff){
-  const sel = Number.isFinite(+carbSel) ? +carbSel : 30;
-  const level = (sel<=30)?30:(sel<=50)?50:70;
-  let s = { meat:0.62, fish:0.10, eggs:0.12, dairy:0.10, veg:0.04, fruit:0.02 };
-  if(diet==="Carnivore"){ s = { meat:0.66, fish:0.12, eggs:0.14, dairy:0.08, veg:0.00, fruit:0.00 }; }
-  else if(diet==="Ketovore"){
-    if(level===30) s = { meat:0.60, fish:0.11, eggs:0.11, dairy:0.10, veg:0.06, fruit:0.02 };
-    if(level===50) s = { meat:0.56, fish:0.11, eggs:0.11, dairy:0.10, veg:0.10, fruit:0.02 };
-    if(level===70) s = { meat:0.52, fish:0.11, eggs:0.10, dairy:0.10, veg:0.13, fruit:0.04 };
-  } else {
-    if(level===30) s = { meat:0.58, fish:0.11, eggs:0.11, dairy:0.10, veg:0.08, fruit:0.02 };
-    if(level===50) s = { meat:0.54, fish:0.11, eggs:0.10, dairy:0.10, veg:0.12, fruit:0.03 };
-    if(level===70) s = { meat:0.50, fish:0.11, eggs:0.10, dairy:0.10, veg:0.15, fruit:0.04 };
-  }
-  if(onoff==="on"){
-    if(["run","cycle","aerobic","club"].includes(fitnessType)){ s.fish+=0.02; s.veg+=0.02; s.fruit+=0.02; s.meat-=0.04; }
-    else if(["strength","anaerobic","martial"].includes(fitnessType)){ s.meat+=0.03; s.eggs+=0.02; s.dairy+=0.01; s.veg-=0.03; s.fruit-=0.02; }
-  } else if(onoff==="off"){ s.dairy+=0.02; s.meat-=0.02; }
-  const sum = Object.values(s).reduce((a,b)=>a+b,0)||1; for(const k in s){ s[k]=Math.max(0,s[k]/sum); } return s;
 }
 
 /* 一時保存→リロード後に自動計算 */
