@@ -275,8 +275,10 @@
 const $ = id => document.getElementById(id);
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 
-/* 表示の伏せ字設定（trueで表示だけ???に） */
-const OBFUSCATE_OUTPUT = true;
+/* === 追加：出力マスク設定（ご要望①〜⑦用） === */
+const MASK_OUTPUTS = true; // 常時「???」表示にする
+const Q = "???";
+function setText(id, val){ const el=$(id); if(el) el.textContent=val; }
 
 /* テーマ */
 function applyThemeFromStorage(){
@@ -542,7 +544,7 @@ function estimateElectrolytes(habit, fitnessType, currentCarb, w, age){
   return { k: Math.max(0, Math.round(k)), na: Math.max(0, Math.round(na)), mg: Math.max(0, Math.round(mg)) };
 }
 
-/* グラフ：縦軸ラベル非表示＋プロットのみぼかし */
+/* グラフ */
 function fitCanvasDPR(canvas){
   const dpr = Math.max(1, window.devicePixelRatio||1);
   const rect = canvas.getBoundingClientRect();
@@ -561,6 +563,8 @@ document.addEventListener('click',(e)=>{
 });
 function seededNoise(n){ return Math.sin(n*1.7)*0.6 + Math.sin(n*0.37)*0.4; }
 
+/* ★ 改良版：非現実収束の抑制と月間変化クランプ
+   ★ ご要望⑧：縦軸の数値だけぼかす（横軸はそのまま） */
 function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, isCut}){
   const cvs = $("wtChart"); fitCanvasDPR(cvs);
   const ctx = cvs.getContext("2d"); const W=cvs.width, H=cvs.height;
@@ -572,12 +576,13 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
 
   const isMaintain = Math.abs(dailyDeltaKcal) < 50;
   const isBulk = dailyDeltaKcal > 50;
-  const MAX_MONTHLY = isMaintain ? 0.2 : (isBulk ? 2.0 : 3.0);
+  const MAX_MONTHLY = isMaintain ? 0.2 : (isBulk ? 2.0 : 3.0); // 維持±0.2 / 増量≤2.0 / 減量≤3.0 kg/月
 
   const xs=[], ys=[]; let w=startKg;
   for(let m=0;m<=months;m++){
     const adapt=Math.pow(0.85,m), noise=0.15*seededNoise(m);
     let delta=baseMonthlyKg*adapt+noise;
+
     if(targetKg!=null){
       const gap=targetKg-w;
       const near = Math.abs(gap) <= 10 ? 0.10 : 0.02;
@@ -596,10 +601,8 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
   const plotW=W-padL-padR, plotH=H-padT-padB;
   const xTo=m=> padL + (m/months)*plotW;
   const yTo=kg=> padT + (1-(kg-minY)/yRange)*plotH;
-  const xPlot=m=> (m/months)*plotW;
-  const yPlot=kg=> (1-(kg-minY)/yRange)*plotH;
 
-  // グリッド（くっきり）
+  // グリッド
   ctx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--grid').trim();
   ctx.lineWidth=1;
   const ySteps = 3;
@@ -607,13 +610,12 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
     const val=minY+(yRange/ySteps)*i, yy=yTo(val);
     ctx.beginPath(); ctx.moveTo(padL,yy); ctx.lineTo(W-padR,yy); ctx.stroke();
   }
-  // 軸（くっきり）
   ctx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--axisLine').trim();
   ctx.lineWidth=1.5;
   ctx.beginPath(); ctx.moveTo(padL, yTo(minY)); ctx.lineTo(W-padR, yTo(minY)); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(padL, yTo(minY)); ctx.lineTo(padL, padT); ctx.stroke();
 
-  // X軸ラベルのみ表示（縦軸は非表示）
+  // 軸ラベル（横軸は通常表示）
   ctx.fillStyle=getComputedStyle(document.body).getPropertyValue('--axis').trim();
   ctx.font=`${Math.round(W/60)+11}px system-ui`;
   const ticks = months<=1? [0,7,14,21,30] : months<=3? [0,30,60,90] : months<=6? [0,60,120,180] : [0,90,180,270,360];
@@ -622,34 +624,35 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
     const label=`${d}日`; const tw=ctx.measureText(label).width;
     let xSafe=Math.min(Math.max(xx-tw/2, padL), W-padR-tw);
     if(d===0) xSafe = padL + 12;
-    ctx.fillText(label, xSafe, H-16);
+    ctx.fillText(label, xSafe, H-16); // 横軸はそのまま
   });
-  // ※縦軸ラベルは描画しない
 
-  // プロットのみオフスクリーンで描画→ぼかして貼り付け
-  const off = document.createElement('canvas');
-  off.width = Math.max(1, Math.floor(plotW));
-  off.height = Math.max(1, Math.floor(plotH));
-  const oc = off.getContext('2d');
-
-  // 目標線（ぼかし対象）
-  if(targetKg!=null){
-    oc.strokeStyle=getComputedStyle(document.body).getPropertyValue('--red').trim() || "#ff7575";
-    oc.setLineDash([6,6]); oc.lineWidth=1.5;
-    oc.beginPath(); oc.moveTo(0, yPlot(targetKg)); oc.lineTo(plotW, yPlot(targetKg)); oc.stroke(); oc.setLineDash([]);
+  // ★縦軸の数値はぼかして読めなくする
+  for(let i=0;i<=ySteps;i++){
+    const val=minY+(yRange/ySteps)*i; const yy=yTo(val);
+    const label=`${val.toFixed(1)}kg`; const tw=ctx.measureText(label).width;
+    const yClamped = Math.min(Math.max(yy-4, padT+14), H-padB-8);
+    ctx.save();
+    ctx.filter = 'blur(6px)';  // ぼかし
+    ctx.fillText(label, Math.max(padL-tw-10,6), yClamped);
+    ctx.restore();
   }
-  // 線と点（ぼかし対象）
-  const acc = getComputedStyle(document.body).getPropertyValue('--acc').trim() || "#48d1b5";
-  oc.strokeStyle=acc; oc.lineWidth=3; oc.beginPath();
-  xs.forEach((m,i)=>{ const xx=xPlot(m), yy=yPlot(ys[i]); if(i===0) oc.moveTo(xx,yy); else oc.lineTo(xx,yy); });
-  oc.stroke();
-  oc.fillStyle=acc;
-  xs.forEach((m,i)=>{ const xx=xPlot(m), yy=yPlot(ys[i]); oc.beginPath(); oc.arc(xx,yy,2.5,0,Math.PI*2); oc.fill(); });
 
-  ctx.save();
-  ctx.filter='blur(3px)';
-  ctx.drawImage(off, padL, padT);
-  ctx.filter='none';
+  if(targetKg!=null){
+    ctx.strokeStyle="#ff7575"; ctx.setLineDash([6,6]);
+    ctx.beginPath(); ctx.moveTo(padL, yTo(targetKg)); ctx.lineTo(W-padR, yTo(targetKg)); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // 折れ線
+  ctx.save(); ctx.beginPath();
+  ctx.rect(padL, padT, plotW, plotH); ctx.clip();
+  ctx.strokeStyle="#48d1b5"; ctx.lineWidth=3;
+  ctx.beginPath();
+  xs.forEach((m,i)=>{ const xx=xTo(m), yy=yTo(ys[i]); if(i===0) ctx.moveTo(xx,yy); else ctx.lineTo(xx,yy); });
+  ctx.stroke();
+  ctx.fillStyle="#48d1b5";
+  xs.forEach((m,i)=>{ const xx=xTo(m), yy=yTo(ys[i]); ctx.beginPath(); ctx.arc(xx,yy,2.5,0,Math.PI*2); ctx.fill(); });
   ctx.restore();
 
   window._lastDrawArgs = {startKg,w, targetKg, months, dailyDeltaKcal, kcalPerKg, isCut};
@@ -736,7 +739,7 @@ function parseFPRatio(txt){
   return {fat: Math.max(0, f/s), prot: Math.max(0, p/s)};
 }
 
-/* メイン計算（表示は???に置換） */
+/* メイン計算（★f:p厳密分配に修正） */
 function calc(){
   updatePFMenu();
   if(!requireFilled()) return;
@@ -775,7 +778,7 @@ function calc(){
              : (pTier==='low'?'8:2':pTier==='high'?'7:3':'7.5:2.5');
   const share = parseFPRatio(fpr);
 
-  // マクロ：糖質→残りを f:p で分配
+  // マクロ：糖質→残りを f:p で厳密分配
   let carb_g=carbsBy(diet, carbSel, onoff);
   let ck=carb_g*4;
   let remain = Math.max(0, targetKcal - ck);
@@ -792,7 +795,7 @@ function calc(){
   const kcal = pk+ck+fk;
   if(adj.adjusted) warnMsg = adj.reason;
 
-  // 表示（基礎データは実数表示、他は???表示）
+  // 表示（基礎データは通常表示のまま）
   $("bmi").textContent=bmi.toFixed(2);
   $("bmr").textContent=Math.round(bmr).toLocaleString();
   $("tdee").textContent=Math.round(tdee).toLocaleString();
@@ -804,29 +807,27 @@ function calc(){
 
   $("dietLabel").textContent=(diet==="TKD"?"肉食寄りTKD":diet.toUpperCase());
 
-  // ★ ① 摂取カロリー → ???kcal/日
-  $("kcal").textContent = OBFUSCATE_OUTPUT ? "???" : Math.round(kcal).toLocaleString();
+  // ★ ご要望①：摂取カロリー???kcal/日
+  setText("kcal", MASK_OUTPUTS ? Q : Math.round(kcal).toLocaleString());
 
-  // ★ ②③ マクロ（g/日,kcal） → ??? に置換（棒グラフは従来通り）
-  $("p").textContent     = OBFUSCATE_OUTPUT ? "???" : Math.round(protein_g);
-  $("f").textContent     = OBFUSCATE_OUTPUT ? "???" : Math.round(fat_g);
-  $("c").textContent     = OBFUSCATE_OUTPUT ? "???" : Math.round(carb_g);
-  $("pkcal").textContent = OBFUSCATE_OUTPUT ? "???" : Math.round(pk).toLocaleString();
-  $("fkcal").textContent = OBFUSCATE_OUTPUT ? "???" : Math.round(fk).toLocaleString();
-  $("ckcal").textContent = OBFUSCATE_OUTPUT ? "???" : Math.round(ck).toLocaleString();
+  // ★ ご要望②③：タンパク質/脂質/糖質 g と kcal を ??? に
+  setText("p",    MASK_OUTPUTS ? Q : Math.round(protein_g));
+  setText("f",    MASK_OUTPUTS ? Q : Math.round(fat_g));
+  setText("c",    MASK_OUTPUTS ? Q : Math.round(carb_g));
+  setText("pkcal",MASK_OUTPUTS ? Q : Math.round(pk).toLocaleString());
+  setText("fkcal",MASK_OUTPUTS ? Q : Math.round(fk).toLocaleString());
+  setText("ckcal",MASK_OUTPUTS ? Q : Math.round(ck).toLocaleString());
 
-  // ★ ④⑤ 電解質（mg/日） → ??? に置換
+  // ★ ご要望④⑤：電解質（K/Na/Mg）も ??? に
   const elec = estimateElectrolytes($("habit").value, fitnessType, carb_g, w, age);
-  $("k").textContent  = OBFUSCATE_OUTPUT ? "???" : elec.k.toLocaleString();
-  $("na").textContent = OBFUSCATE_OUTPUT ? "???" : elec.na.toLocaleString();
-  $("mg").textContent = OBFUSCATE_OUTPUT ? "???" : elec.mg.toLocaleString();
+  setText("k",  MASK_OUTPUTS ? Q : elec.k.toLocaleString());
+  setText("na", MASK_OUTPUTS ? Q : elec.na.toLocaleString());
+  setText("mg", MASK_OUTPUTS ? Q : elec.mg.toLocaleString());
 
-  // MacroNote（糖質数値だけ???に、他の説明は維持）
   const fitnessLabelMap={none:"該当なし",strength:"筋トレ",run:"ランニング",cycle:"サイクリング",club:"部活動",martial:"格闘技",aerobic:"その他（有酸素運動）",anaerobic:"その他（無酸素運動）"};
   const onoffTxt = (onoff==="none")?"該当なし":(onoff==="on"?"運動日":"休息日");
-  const carbTxt = OBFUSCATE_OUTPUT ? "???g" : (diet==="Carnivore"?"8g":(Math.round(carb_g))+"g");
   $("macroNote").textContent=
-    `フィットネス：${fitnessLabelMap[fitnessType]}｜オン/オフ：${onoffTxt}｜糖質摂取量（目安）：${carbTxt}｜活動係数AF×日別補正＝TDEE（±12%内）`;
+    `フィットネス：${fitnessLabelMap[fitnessType]}｜オン/オフ：${onoffTxt}｜糖質摂取量（目安）：${diet==="Carnivore"?"8g":(Math.round(carb_g))+"g"}｜活動係数AF×日別補正＝TDEE（±12%内）`;
 
   if(warnMsg){ $("fatWarn").textContent=warnMsg; $("fatWarn").style.display="block"; } else { $("fatWarn").style.display="none"; }
 
@@ -834,7 +835,7 @@ function calc(){
   $("macroCard").style.display="block";
   $("mixCard").style.display="block";
 
-  /* 食材配分（棒バーは従来通り、数値表示だけ???） */
+  /* 食材配分（計算・バーは通常） */
   const sp = splits6By(diet, carbSel, fitnessType, onoff);
   const sel = Number.isFinite(+carbSel) ? +carbSel : 30;
   const level = (sel<=30)?30:(sel<=50)?50:70;
@@ -859,19 +860,36 @@ function calc(){
   const kEggs  = remainKcal * eggsShare;
   const kDairy = dairyLactoseKcal + (remainKcal * dairyShare);
 
-  // ★ ⑥⑦ 食材 g・kcal 表示を ??? に
-  $("gMeat").textContent  = OBFUSCATE_OUTPUT ? "???" : Math.round((kMeat /KCAL_PER_100G.meat *100)/10)*10;
-  $("kMeat").textContent  = OBFUSCATE_OUTPUT ? "???" : Math.round(kMeat);
-  $("gFish").textContent  = OBFUSCATE_OUTPUT ? "???" : Math.round((kFish /KCAL_PER_100G.fish *100)/10)*10;
-  $("kFish").textContent  = OBFUSCATE_OUTPUT ? "???" : Math.round(kFish);
-  $("gEggs").textContent  = OBFUSCATE_OUTPUT ? "???" : Math.round((kEggs /KCAL_PER_100G.eggs *100)/10)*10;
-  $("kEggs").textContent  = OBFUSCATE_OUTPUT ? "???" : Math.round(kEggs);
-  $("gDairy").textContent = OBFUSCATE_OUTPUT ? "???" : Math.round((kDairy/KCAL_PER_100G.dairy*100)/10)*10;
-  $("kDairy").textContent = OBFUSCATE_OUTPUT ? "???" : Math.round(kDairy);
-  $("gVeg").textContent   = OBFUSCATE_OUTPUT ? "???" : (diet==="Carnivore"?0:Math.round((kVeg  /KCAL_PER_100G.veg  *100)/10)*10);
-  $("kVeg").textContent   = OBFUSCATE_OUTPUT ? "???" : Math.round(kVeg);
-  $("gFruit").textContent = OBFUSCATE_OUTPUT ? "???" : (diet==="Carnivore"?0:Math.round((kFruit/KCAL_PER_100G.fruit*100)/10)*10);
-  $("kFruit").textContent = OBFUSCATE_OUTPUT ? "???" : Math.round(kFruit);
+  // テキストはご要望⑥⑦に合わせて ??? 表示
+  const setFoodNumbers = (ids, mask=true, values=[])=>{
+    ids.forEach((id, i)=>{
+      setText(id, mask ? Q : values[i]);
+    });
+  };
+
+  // 計算値（バー用に保持）
+  const gMeat = Math.round((kMeat /KCAL_PER_100G.meat *100)/10)*10;
+  const gFish = Math.round((kFish /KCAL_PER_100G.fish *100)/10)*10;
+  const gEggs = Math.round((kEggs /KCAL_PER_100G.eggs *100)/10)*10;
+  const gDairy= Math.round((kDairy/KCAL_PER_100G.dairy*100)/10)*10;
+  const gVeg  = (diet==="Carnivore"?0:Math.round((kVeg  /KCAL_PER_100G.veg  *100)/10)*10);
+  const gFruit= (diet==="Carnivore"?0:Math.round((kFruit/KCAL_PER_100G.fruit*100)/10)*10);
+
+  // まず通常値をセット（非マスク時用）
+  setFoodNumbers(["gMeat","gFish","gEggs","gDairy","gVeg","gFruit"], false, [gMeat,gFish,gEggs,gDairy,gVeg,gFruit]);
+  setFoodNumbers(["kMeat","kFish","kEggs","kDairy","kVeg","kFruit"], false, [Math.round(kMeat),Math.round(kFish),Math.round(kEggs),Math.round(kDairy),Math.round(kVeg),Math.round(kFruit)]);
+
+  // その上で条件に応じてマスク
+  if(MASK_OUTPUTS){
+    if(diet==="Carnivore"){
+      // ★⑥ CARNIVORE時：肉・魚介類・卵・乳製品を ??? に
+      setFoodNumbers(["gMeat","kMeat","gFish","kFish","gEggs","kEggs","gDairy","kDairy"], true);
+      // 野菜・果物は0のまま（表示仕様は既存維持）
+    }else if(diet==="Ketovore" || diet==="TKD"){
+      // ★⑦ KETOVORE/TKD時：全項目（肉/魚介類/卵/乳製品/野菜/果物）を ??? に
+      setFoodNumbers(["gMeat","kMeat","gFish","kFish","gEggs","kEggs","gDairy","kDairy","gVeg","kVeg","gFruit","kFruit"], true);
+    }
+  }
 
   updateFoodBars({meat:kMeat,fish:kFish,eggs:kEggs,dairy:kDairy,veg:kVeg,fruit:kFruit},kcal);
   updateBars(pk, fk, ck, kcal);
@@ -914,7 +932,7 @@ function restoreFromSessionAndAutoCalc(){
     });
     $("targetCol").style.display = (goal==="maintain") ? "none" : "block";
     toggleCarb(); enforceHabitRules();
-    updatePFMenu();
+    updatePFMenu(); // ← S/A/H/Wのみで再生成
     const pfSel = $("pFactor");
     const idx = Array.from(pfSel.options).findIndex(o=>o.dataset.tier===pTier);
     if(idx>=0) pfSel.selectedIndex = idx;
