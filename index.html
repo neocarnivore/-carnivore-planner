@@ -275,10 +275,13 @@
 const $ = id => document.getElementById(id);
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 
-/* === 追加：出力マスク設定（ご要望①〜⑦用） === */
-const MASK_OUTPUTS = true; // 常時「???」表示にする
-const Q = "???";
-function setText(id, val){ const el=$(id); if(el) el.textContent=val; }
+/* ▼▼▼ 数値マスク＆グラフぼかし設定（ご要望） ▼▼▼ */
+const MASK_MACRO_TEXT = true;   // ①②③ 摂取カロリー/タンパク質/脂質/糖質（g, kcal）を???表示
+const MASK_ELECTROLYTES = true; // ④⑤ K/Na/Mg を???表示
+const MASK_FOOD_TEXT = true;    // ⑥⑦ 食材別 g ≈ kcal を???表示（CARNIVORE/KETOVORE/TKD）
+const BLUR_WT_CHART = true;     // ⑧ 体重推移の線と点のみをぼかし描画
+const MASK_Y_AXIS = true;       // ⑨ 縦軸ラベルは???kgに（横軸はそのまま）
+/* ▲▲▲ ここだけ追加。以降は既存仕様そのまま ▲▲▲ */
 
 /* テーマ */
 function applyThemeFromStorage(){
@@ -563,8 +566,7 @@ document.addEventListener('click',(e)=>{
 });
 function seededNoise(n){ return Math.sin(n*1.7)*0.6 + Math.sin(n*0.37)*0.4; }
 
-/* ★ 改良版：非現実収束の抑制と月間変化クランプ
-   ★ ご要望⑧：縦軸の数値だけぼかす（横軸はそのまま） */
+/* ★ 改良版：非現実収束の抑制と月間変化クランプ＋（要望）縦軸マスク＆線ぼかし */
 function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, isCut}){
   const cvs = $("wtChart"); fitCanvasDPR(cvs);
   const ctx = cvs.getContext("2d"); const W=cvs.width, H=cvs.height;
@@ -585,7 +587,7 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
 
     if(targetKg!=null){
       const gap=targetKg-w;
-      const near = Math.abs(gap) <= 10 ? 0.10 : 0.02;
+      const near = Math.abs(gap) <= 10 ? 0.10 : 0.02; // 近い時だけ弱く吸着
       delta += gap*near;
     }
     delta = clamp(delta, -MAX_MONTHLY, MAX_MONTHLY);
@@ -602,7 +604,7 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
   const xTo=m=> padL + (m/months)*plotW;
   const yTo=kg=> padT + (1-(kg-minY)/yRange)*plotH;
 
-  // グリッド
+  // 背景グリッド
   ctx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--grid').trim();
   ctx.lineWidth=1;
   const ySteps = 3;
@@ -610,12 +612,13 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
     const val=minY+(yRange/ySteps)*i, yy=yTo(val);
     ctx.beginPath(); ctx.moveTo(padL,yy); ctx.lineTo(W-padR,yy); ctx.stroke();
   }
+  // 軸ライン
   ctx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--axisLine').trim();
   ctx.lineWidth=1.5;
   ctx.beginPath(); ctx.moveTo(padL, yTo(minY)); ctx.lineTo(W-padR, yTo(minY)); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(padL, yTo(minY)); ctx.lineTo(padL, padT); ctx.stroke();
 
-  // 軸ラベル（横軸は通常表示）
+  // 軸ラベル（横軸はそのまま、縦軸は???kg）
   ctx.fillStyle=getComputedStyle(document.body).getPropertyValue('--axis').trim();
   ctx.font=`${Math.round(W/60)+11}px system-ui`;
   const ticks = months<=1? [0,7,14,21,30] : months<=3? [0,30,60,90] : months<=6? [0,60,120,180] : [0,90,180,270,360];
@@ -624,35 +627,35 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
     const label=`${d}日`; const tw=ctx.measureText(label).width;
     let xSafe=Math.min(Math.max(xx-tw/2, padL), W-padR-tw);
     if(d===0) xSafe = padL + 12;
-    ctx.fillText(label, xSafe, H-16); // 横軸はそのまま
+    ctx.fillText(label, xSafe, H-16);
   });
-
-  // ★縦軸の数値はぼかして読めなくする
   for(let i=0;i<=ySteps;i++){
     const val=minY+(yRange/ySteps)*i; const yy=yTo(val);
-    const label=`${val.toFixed(1)}kg`; const tw=ctx.measureText(label).width;
+    const label = MASK_Y_AXIS ? "???kg" : `${val.toFixed(1)}kg`;
+    const tw=ctx.measureText(label).width;
     const yClamped = Math.min(Math.max(yy-4, padT+14), H-padB-8);
-    ctx.save();
-    ctx.filter = 'blur(6px)';  // ぼかし
     ctx.fillText(label, Math.max(padL-tw-10,6), yClamped);
-    ctx.restore();
   }
 
+  // 目標ライン（そのまま）
   if(targetKg!=null){
     ctx.strokeStyle="#ff7575"; ctx.setLineDash([6,6]);
     ctx.beginPath(); ctx.moveTo(padL, yTo(targetKg)); ctx.lineTo(W-padR, yTo(targetKg)); ctx.stroke();
     ctx.setLineDash([]);
   }
 
-  // 折れ線
-  ctx.save(); ctx.beginPath();
+  // 曲線（ここだけぼかし）
+  ctx.save();
+  ctx.beginPath();
   ctx.rect(padL, padT, plotW, plotH); ctx.clip();
+  if(BLUR_WT_CHART){ ctx.filter = 'blur(5px)'; }
   ctx.strokeStyle="#48d1b5"; ctx.lineWidth=3;
   ctx.beginPath();
   xs.forEach((m,i)=>{ const xx=xTo(m), yy=yTo(ys[i]); if(i===0) ctx.moveTo(xx,yy); else ctx.lineTo(xx,yy); });
   ctx.stroke();
   ctx.fillStyle="#48d1b5";
   xs.forEach((m,i)=>{ const xx=xTo(m), yy=yTo(ys[i]); ctx.beginPath(); ctx.arc(xx,yy,2.5,0,Math.PI*2); ctx.fill(); });
+  if(BLUR_WT_CHART){ ctx.filter = 'none'; }
   ctx.restore();
 
   window._lastDrawArgs = {startKg,w, targetKg, months, dailyDeltaKcal, kcalPerKg, isCut};
@@ -782,8 +785,10 @@ function calc(){
   let carb_g=carbsBy(diet, carbSel, onoff);
   let ck=carb_g*4;
   let remain = Math.max(0, targetKcal - ck);
+
   let pk = remain * share.prot;
   let fk = remain * share.fat;
+
   let protein_g = pk/4;
   let fat_g     = fk/9;
 
@@ -795,7 +800,7 @@ function calc(){
   const kcal = pk+ck+fk;
   if(adj.adjusted) warnMsg = adj.reason;
 
-  // 表示（基礎データは通常表示のまま）
+  // 表示（基礎データはそのまま表示）
   $("bmi").textContent=bmi.toFixed(2);
   $("bmr").textContent=Math.round(bmr).toLocaleString();
   $("tdee").textContent=Math.round(tdee).toLocaleString();
@@ -807,22 +812,20 @@ function calc(){
 
   $("dietLabel").textContent=(diet==="TKD"?"肉食寄りTKD":diet.toUpperCase());
 
-  // ★ ご要望①：摂取カロリー???kcal/日
-  setText("kcal", MASK_OUTPUTS ? Q : Math.round(kcal).toLocaleString());
+  // ①②③ マスク表示
+  $("kcal").textContent = MASK_MACRO_TEXT ? '???' : Math.round(kcal).toLocaleString();
+  $("p").textContent    = MASK_MACRO_TEXT ? '???' : Math.round(protein_g);
+  $("f").textContent    = MASK_MACRO_TEXT ? '???' : Math.round(fat_g);
+  $("c").textContent    = MASK_MACRO_TEXT ? '???' : Math.round(carb_g);
+  $("pkcal").textContent= MASK_MACRO_TEXT ? '???' : Math.round(pk).toLocaleString();
+  $("fkcal").textContent= MASK_MACRO_TEXT ? '???' : Math.round(fk).toLocaleString();
+  $("ckcal").textContent= MASK_MACRO_TEXT ? '???' : Math.round(ck).toLocaleString();
 
-  // ★ ご要望②③：タンパク質/脂質/糖質 g と kcal を ??? に
-  setText("p",    MASK_OUTPUTS ? Q : Math.round(protein_g));
-  setText("f",    MASK_OUTPUTS ? Q : Math.round(fat_g));
-  setText("c",    MASK_OUTPUTS ? Q : Math.round(carb_g));
-  setText("pkcal",MASK_OUTPUTS ? Q : Math.round(pk).toLocaleString());
-  setText("fkcal",MASK_OUTPUTS ? Q : Math.round(fk).toLocaleString());
-  setText("ckcal",MASK_OUTPUTS ? Q : Math.round(ck).toLocaleString());
-
-  // ★ ご要望④⑤：電解質（K/Na/Mg）も ??? に
+  // ④⑤ 電解質（内部計算→表示はマスク）
   const elec = estimateElectrolytes($("habit").value, fitnessType, carb_g, w, age);
-  setText("k",  MASK_OUTPUTS ? Q : elec.k.toLocaleString());
-  setText("na", MASK_OUTPUTS ? Q : elec.na.toLocaleString());
-  setText("mg", MASK_OUTPUTS ? Q : elec.mg.toLocaleString());
+  $("k").textContent  = MASK_ELECTROLYTES ? '???' : elec.k.toLocaleString();
+  $("na").textContent = MASK_ELECTROLYTES ? '???' : elec.na.toLocaleString();
+  $("mg").textContent = MASK_ELECTROLYTES ? '???' : elec.mg.toLocaleString();
 
   const fitnessLabelMap={none:"該当なし",strength:"筋トレ",run:"ランニング",cycle:"サイクリング",club:"部活動",martial:"格闘技",aerobic:"その他（有酸素運動）",anaerobic:"その他（無酸素運動）"};
   const onoffTxt = (onoff==="none")?"該当なし":(onoff==="on"?"運動日":"休息日");
@@ -835,7 +838,7 @@ function calc(){
   $("macroCard").style.display="block";
   $("mixCard").style.display="block";
 
-  /* 食材配分（計算・バーは通常） */
+  /* 食材配分（バー等は実数で更新、表示だけ???） */
   const sp = splits6By(diet, carbSel, fitnessType, onoff);
   const sel = Number.isFinite(+carbSel) ? +carbSel : 30;
   const level = (sel<=30)?30:(sel<=50)?50:70;
@@ -860,36 +863,23 @@ function calc(){
   const kEggs  = remainKcal * eggsShare;
   const kDairy = dairyLactoseKcal + (remainKcal * dairyShare);
 
-  // テキストはご要望⑥⑦に合わせて ??? 表示
-  const setFoodNumbers = (ids, mask=true, values=[])=>{
-    ids.forEach((id, i)=>{
-      setText(id, mask ? Q : values[i]);
-    });
-  };
+  const gMeat  = Math.round((kMeat /KCAL_PER_100G.meat *100)/10)*10;
+  const gFish  = Math.round((kFish /KCAL_PER_100G.fish *100)/10)*10;
+  const gEggs  = Math.round((kEggs /KCAL_PER_100G.eggs *100)/10)*10;
+  const gDairy = Math.round((kDairy/KCAL_PER_100G.dairy*100)/10)*10;
+  const gVeg   = (diet==="Carnivore"?0:Math.round((kVeg  /KCAL_PER_100G.veg  *100)/10)*10);
+  const gFruit = (diet==="Carnivore"?0:Math.round((kFruit/KCAL_PER_100G.fruit*100)/10)*10);
 
-  // 計算値（バー用に保持）
-  const gMeat = Math.round((kMeat /KCAL_PER_100G.meat *100)/10)*10;
-  const gFish = Math.round((kFish /KCAL_PER_100G.fish *100)/10)*10;
-  const gEggs = Math.round((kEggs /KCAL_PER_100G.eggs *100)/10)*10;
-  const gDairy= Math.round((kDairy/KCAL_PER_100G.dairy*100)/10)*10;
-  const gVeg  = (diet==="Carnivore"?0:Math.round((kVeg  /KCAL_PER_100G.veg  *100)/10)*10);
-  const gFruit= (diet==="Carnivore"?0:Math.round((kFruit/KCAL_PER_100G.fruit*100)/10)*10);
-
-  // まず通常値をセット（非マスク時用）
-  setFoodNumbers(["gMeat","gFish","gEggs","gDairy","gVeg","gFruit"], false, [gMeat,gFish,gEggs,gDairy,gVeg,gFruit]);
-  setFoodNumbers(["kMeat","kFish","kEggs","kDairy","kVeg","kFruit"], false, [Math.round(kMeat),Math.round(kFish),Math.round(kEggs),Math.round(kDairy),Math.round(kVeg),Math.round(kFruit)]);
-
-  // その上で条件に応じてマスク
-  if(MASK_OUTPUTS){
-    if(diet==="Carnivore"){
-      // ★⑥ CARNIVORE時：肉・魚介類・卵・乳製品を ??? に
-      setFoodNumbers(["gMeat","kMeat","gFish","kFish","gEggs","kEggs","gDairy","kDairy"], true);
-      // 野菜・果物は0のまま（表示仕様は既存維持）
-    }else if(diet==="Ketovore" || diet==="TKD"){
-      // ★⑦ KETOVORE/TKD時：全項目（肉/魚介類/卵/乳製品/野菜/果物）を ??? に
-      setFoodNumbers(["gMeat","kMeat","gFish","kFish","gEggs","kEggs","gDairy","kDairy","gVeg","kVeg","gFruit","kFruit"], true);
-    }
+  function setFoodRow(idG,idK,g,k){
+    $(idG).textContent = MASK_FOOD_TEXT ? '???' : g;
+    $(idK).textContent = MASK_FOOD_TEXT ? '???' : Math.round(k);
   }
+  setFoodRow("gMeat","kMeat",gMeat,kMeat);
+  setFoodRow("gFish","kFish",gFish,kFish);
+  setFoodRow("gEggs","kEggs",gEggs,kEggs);
+  setFoodRow("gDairy","kDairy",gDairy,kDairy);
+  setFoodRow("gVeg","kVeg",gVeg,kVeg);
+  setFoodRow("gFruit","kFruit",gFruit,kFruit);
 
   updateFoodBars({meat:kMeat,fish:kFish,eggs:kEggs,dairy:kDairy,veg:kVeg,fruit:kFruit},kcal);
   updateBars(pk, fk, ck, kcal);
