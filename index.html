@@ -49,10 +49,20 @@
   .macroBox .label{font-size:12px;color:var(--muted);font-weight:400;margin-bottom:2px}
   .macroBox .val{font-size:clamp(20px,3.5vw,24px);font-weight:800;line-height:1.1}
   .macroBox .kcal b{font-size:16px}
-  .bar{height:8px;background:#0f141e;border:1px solid var(--border);border-radius:999px;overflow:hidden;margin-top:8px}
+  .bar{height:8px;background:#0f141e;border:1px solid var(--border);border-radius:999px;overflow:hidden;margin-top:8px;position:relative}
   .bar span{display:block;height:100%;width:0%}
   .bar.p span{background:var(--p)} .bar.f span{background:var(--f)} .bar.c span{background:var(--c)}
   .light .bar{background:#fff;border:1.5px solid #d7e2ef}
+
+  /* === ここだけ追加：棒グラフ全体をモザイク（ぼかし） ===
+     バー本体の上に透明オーバーレイを敷き、背景のみをぼかす。
+     ラベルや数値などテキストは対象外（要素外なので無影響）。 */
+  .bar::after{
+    content:""; position:absolute; inset:0; pointer-events:none;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
   .tab{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
   .tab button{background:transparent;border:1px solid var(--border);color:var(--text);padding:10px;border-radius:10px}
   .tab button.active{background:var(--acc);color:#fff;border-color:transparent}
@@ -634,7 +644,7 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
     ctx.setLineDash([]); ctx.restore();
   }
 
-  // グラフ本体（ぼかし）
+  // グラフ本体（ぼかし：プロット領域のみ）
   ctx.save(); ctx.beginPath();
   ctx.rect(padL, padT, plotW, plotH); ctx.clip();
   ctx.filter = 'blur(4px)';
