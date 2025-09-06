@@ -49,20 +49,10 @@
   .macroBox .label{font-size:12px;color:var(--muted);font-weight:400;margin-bottom:2px}
   .macroBox .val{font-size:clamp(20px,3.5vw,24px);font-weight:800;line-height:1.1}
   .macroBox .kcal b{font-size:16px}
-  .bar{height:8px;background:#0f141e;border:1px solid var(--border);border-radius:999px;overflow:hidden;margin-top:8px;position:relative}
+  .bar{height:8px;background:#0f141e;border:1px solid var(--border);border-radius:999px;overflow:hidden;margin-top:8px}
   .bar span{display:block;height:100%;width:0%}
   .bar.p span{background:var(--p)} .bar.f span{background:var(--f)} .bar.c span{background:var(--c)}
   .light .bar{background:#fff;border:1.5px solid #d7e2ef}
-
-  /* === ここだけ追加：棒グラフ全体をモザイク（ぼかし） ===
-     バー本体の上に透明オーバーレイを敷き、背景のみをぼかす。
-     ラベルや数値などテキストは対象外（要素外なので無影響）。 */
-  .bar::after{
-    content:""; position:absolute; inset:0; pointer-events:none;
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-  }
-
   .tab{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
   .tab button{background:transparent;border:1px solid var(--border);color:var(--text);padding:10px;border-radius:10px}
   .tab button.active{background:var(--acc);color:#fff;border-color:transparent}
@@ -568,7 +558,7 @@ document.addEventListener('click',(e)=>{
 });
 function seededNoise(n){ return Math.sin(n*1.7)*0.6 + Math.sin(n*0.37)*0.4; }
 
-/* ★ 改良版：非現実収束の抑制＋表示ぼかし＋縦軸???kg */
+/* ★ ピクセレート版：データ部分のみモザイク。軸の文字は未加工 */
 function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, isCut}){
   const cvs = $("wtChart"); fitCanvasDPR(cvs);
   const ctx = cvs.getContext("2d"); const W=cvs.width, H=cvs.height;
@@ -605,7 +595,7 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
   const xTo=m=> padL + (m/months)*plotW;
   const yTo=kg=> padT + (1-(kg-minY)/yRange)*plotH;
 
-  // グリッド
+  /* === 背景グリッド＆軸（そのまま表示、モザイク対象外） === */
   ctx.strokeStyle=getComputedStyle(document.body).getPropertyValue('--grid').trim();
   ctx.lineWidth=1;
   const ySteps = 3;
@@ -618,7 +608,7 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
   ctx.beginPath(); ctx.moveTo(padL, yTo(minY)); ctx.lineTo(W-padR, yTo(minY)); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(padL, yTo(minY)); ctx.lineTo(padL, padT); ctx.stroke();
 
-  // 目盛り（横軸は数値表示／縦軸は???kg）
+  // 目盛り（横軸は数値表示／縦軸は???kg）—ここも未加工
   ctx.fillStyle=getComputedStyle(document.body).getPropertyValue('--axis').trim();
   ctx.font=`${Math.round(W/60)+11}px system-ui`;
   const ticks = months<=1? [0,7,14,21,30] : months<=3? [0,30,60,90] : months<=6? [0,60,120,180] : [0,90,180,270,360];
@@ -630,30 +620,54 @@ function drawWeightChart({startKg, targetKg, months, dailyDeltaKcal, kcalPerKg, 
     ctx.fillText(label, xSafe, H-16);
   });
   for(let i=0;i<=ySteps;i++){
-    const val=minY+(yRange/ySteps)*i; const yy=yTo(val);
+    const yy=yTo(minY+(yRange/ySteps)*i);
     const label=`???kg`; const tw=ctx.measureText(label).width;
     const yClamped = Math.min(Math.max(yy-4, padT+14), H-padB-8);
     ctx.fillText(label, Math.max(padL-tw-10,6), yClamped);
   }
 
-  // 目標ライン（ぼかし）
+  /* === データだけオフスクリーンに描いてからピクセレート === */
+  // オフスクリーン（プロット領域サイズ）
+  const buff = document.createElement('canvas');
+  buff.width = Math.max(1, Math.floor(plotW));
+  buff.height = Math.max(1, Math.floor(plotH));
+  const bctx = buff.getContext('2d');
+
+  // 座標をローカル化
+  const xLocal = m => (m/months)*buff.width;
+  const yLocal = kg => (1-(kg-minY)/yRange)*buff.height;
+
+  // 目標ライン
   if(targetKg!=null){
-    ctx.save(); ctx.filter = 'blur(4px)';
-    ctx.strokeStyle="#ff7575"; ctx.setLineDash([6,6]);
-    ctx.beginPath(); ctx.moveTo(padL, yTo(targetKg)); ctx.lineTo(W-padR, yTo(targetKg)); ctx.stroke();
-    ctx.setLineDash([]); ctx.restore();
+    bctx.strokeStyle="#ff7575"; bctx.setLineDash([6,6]); bctx.lineWidth=2;
+    bctx.beginPath(); bctx.moveTo(0, yLocal(targetKg)); bctx.lineTo(buff.width, yLocal(targetKg)); bctx.stroke();
+    bctx.setLineDash([]);
   }
 
-  // グラフ本体（ぼかし：プロット領域のみ）
-  ctx.save(); ctx.beginPath();
-  ctx.rect(padL, padT, plotW, plotH); ctx.clip();
-  ctx.filter = 'blur(4px)';
-  ctx.strokeStyle="#48d1b5"; ctx.lineWidth=3;
-  ctx.beginPath();
-  xs.forEach((m,i)=>{ const xx=xTo(m), yy=yTo(ys[i]); if(i===0) ctx.moveTo(xx,yy); else ctx.lineTo(xx,yy); });
-  ctx.stroke();
-  ctx.fillStyle="#48d1b5";
-  xs.forEach((m,i)=>{ const xx=xTo(m), yy=yTo(ys[i]); ctx.beginPath(); ctx.arc(xx,yy,2.5,0,Math.PI*2); ctx.fill(); });
+  // 折れ線
+  bctx.strokeStyle="#48d1b5"; bctx.lineWidth=3; bctx.lineJoin='round'; bctx.lineCap='round';
+  bctx.beginPath();
+  xs.forEach((m,i)=>{ const xx=xLocal(m), yy=yLocal(ys[i]); if(i===0) bctx.moveTo(xx,yy); else bctx.lineTo(xx,yy); });
+  bctx.stroke();
+
+  // ノード
+  bctx.fillStyle="#48d1b5";
+  xs.forEach((m,i)=>{ const xx=xLocal(m), yy=yLocal(ys[i]); bctx.beginPath(); bctx.arc(xx,yy,2.5,0,Math.PI*2); bctx.fill(); });
+
+  // 縮小→拡大（スムージングOFF）でモザイク
+  const mosaicBlock = Math.max(6, Math.round(Math.min(buff.width, buff.height)/40)); // ブロック大きさ
+  const mini = document.createElement('canvas');
+  mini.width = Math.max(1, Math.floor(buff.width / mosaicBlock));
+  mini.height = Math.max(1, Math.floor(buff.height / mosaicBlock));
+  const mctx = mini.getContext('2d');
+  mctx.imageSmoothingEnabled = true; // 縮小時は平均化
+  mctx.drawImage(buff, 0, 0, buff.width, buff.height, 0, 0, mini.width, mini.height);
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(padL, padT, plotW, plotH); ctx.clip();
+  ctx.imageSmoothingEnabled = false; // 拡大時にドット化
+  ctx.drawImage(mini, padL, padT, plotW, plotH);
+  ctx.imageSmoothingEnabled = true;
   ctx.restore();
 
   window._lastDrawArgs = {startKg,w, targetKg, months, dailyDeltaKcal, kcalPerKg, isCut};
@@ -664,7 +678,7 @@ window.addEventListener('resize', ()=>{
   _resizeId = requestAnimationFrame(()=>{ if(window._lastDrawArgs) drawWeightChart(window._lastDrawArgs); });
 });
 
-/* 棒グラフ */
+/* 棒グラフ（マクロ進捗バー） */
 function updateBars(pk, fk, ck, total){
   const p= total? Math.min(100, Math.round(pk/total*100)) : 0;
   const f= total? Math.min(100, Math.round(fk/total*100)) : 0;
@@ -824,7 +838,7 @@ function calc(){
 
   $("dietLabel").textContent=(diet==="TKD"?"肉食寄りTKD":diet.toUpperCase());
 
-  // まず通常どおり値を入れて（バー計算や分配に利用）、その後に表示だけ???へマスク
+  // まず通常値を入れてバー等を更新、その後で表示だけ???へマスク
   $("kcal").textContent=Math.round(kcal).toLocaleString();
   $("p").textContent=Math.round(protein_g);
   $("f").textContent=Math.round(fat_g);
@@ -879,10 +893,10 @@ function calc(){
   updateFoodBars({meat:kMeat,fish:kFish,eggs:kEggs,dairy:kDairy,veg:kVeg,fruit:kFruit},kcal);
   updateBars(pk, fk, ck, kcal);
 
-  const targetKg = (goal!=="maintain" && +$("targetWeight").value>0) ? clamp(+$("targetWeight").value,30,250) : null;
-  drawWeightChart({startKg:w,targetKg,months:chartMonths,dailyDeltaKcal:(kcal-tdee),kcalPerKg:7700,isCut:(goal==="cut")});
+  const targetKg2 = (goal!=="maintain" && +$("targetWeight").value>0) ? clamp(+$("targetWeight").value,30,250) : null;
+  drawWeightChart({startKg:w,targetKg:targetKg2,months:chartMonths,dailyDeltaKcal:(kcal-tdee),kcalPerKg:7700,isCut:(goal==="cut")});
 
-  /* === 最後に表示だけ???へ変更（⑥⑦も包括的にマスク） === */
+  /* === 最後に表示だけ???へ変更 === */
   maskOutputs();
 }
 
