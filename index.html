@@ -381,13 +381,6 @@ function closePresetMenu(){
   const menu = $("presetMenu");
   if(menu) menu.classList.remove("show");
 }
-function detachPresetSelection(){
-  const sel = $("presetSelect");
-  if(sel){
-    sel.value = "";
-  }
-  localStorage.removeItem(LAST_PRESET_KEY);
-}
 function getCurrentFormData(){
   return {
     sex:$("sex").value,
@@ -881,8 +874,6 @@ $("pFactor").addEventListener('change', ()=>{
 $("calcBtn").addEventListener("click", ()=>{
   updatePFMenu();
   if(requireFilled()){
-    detachPresetSelection();
-
     if(document.activeElement && typeof document.activeElement.blur === 'function'){
       document.activeElement.blur();
     }
@@ -901,6 +892,7 @@ $("calcBtn").addEventListener("click", ()=>{
     $("calcBtn").setAttribute("aria-pressed", pressed?"false":"true");
   }
 });
+
 const SPORT_FACTORS = {
   strength:{ on:1.10, off:0.94 }, run:{ on:1.12, off:0.92 }, cycle:{ on:1.11, off:0.93 },
   club:{ on:1.12, off:0.92 }, martial:{ on:1.12, off:0.92 }, aerobic:{ on:1.10, off:0.94 }, anaerobic:{ on:1.08, off:0.96 },
@@ -1409,15 +1401,9 @@ function restoreFormFresh(){
   ["baseCard","macroCard","mixCard"].forEach(id=>$(id).style.display="none");
 }
 
-const restoredAutoCalc = restoreFromSessionAndAutoCalc();
-
-if(!restoredAutoCalc){
-  restoreFormFresh();
-  restoreLastPreset();
-}
-
+if(!restoreFromSessionAndAutoCalc()){ restoreFormFresh(); }
+restoreLastPreset();
 refreshPresetSelect();
 updatePFMenu();
 </script>
 </body>
-</html>
