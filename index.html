@@ -381,6 +381,10 @@ function closePresetMenu(){
   const menu = $("presetMenu");
   if(menu) menu.classList.remove("show");
 }
+function detachPresetSelection(){
+  localStorage.removeItem(LAST_PRESET_KEY);
+  if($("presetSelect")) $("presetSelect").value = "";
+}
 function getCurrentFormData(){
   return {
     sex:$("sex").value,
@@ -874,9 +878,8 @@ $("pFactor").addEventListener('change', ()=>{
 $("calcBtn").addEventListener("click", ()=>{
   updatePFMenu();
   if(requireFilled()){
-    if(document.activeElement && typeof document.activeElement.blur === 'function'){
-      document.activeElement.blur();
-    }
+    detachPresetSelection();
+    if(document.activeElement && typeof document.activeElement.blur === 'function'){ document.activeElement.blur(); }
     const vp = document.querySelector('meta[name="viewport"]');
     if(vp){
       const orig = vp.getAttribute('content');
