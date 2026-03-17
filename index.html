@@ -831,7 +831,7 @@ function enforceHabitRules(){
 
 const PF_TIERS = [
   {key:'low',  label:'低め',  pRatio:0.20, fpr:'8:2'},
-  {key:'std',  label:'標準',  pRatio:0.25, fpr:'7.5:2.5'},
+  {key:'std',  label:'普通',  pRatio:0.25, fpr:'7.5:2.5'},
   {key:'high', label:'高め',  pRatio:0.30, fpr:'7:3'}
 ];
 let pTier = 'std';
@@ -875,14 +875,14 @@ function updatePFMenu(){
   const Ekg_pf = (w>0)? (bmr / w) : 0;
 
   PF_TIERS.forEach(t=>{
-    const pf = (t.pRatio * Ekg_pf) / 4;
-    const opt = document.createElement('option');
-    opt.value = String(pf);
-    opt.dataset.tier = t.key;
-    opt.dataset.fpr  = t.fpr;
-    opt.textContent = `${fmtPF(pf)}（${t.label}）`;
-    sel.appendChild(opt);
-  });
+  const pf = (t.pRatio * Ekg_pf) / 4;
+  const opt = document.createElement('option');
+  opt.value = String(pf);
+  opt.dataset.tier = t.key;
+  opt.dataset.fpr  = t.fpr;
+  opt.textContent = t.label;
+  sel.appendChild(opt);
+});
 
   const idx = PF_TIERS.findIndex(t=>t.key===prevTier);
   sel.selectedIndex = (idx>=0 ? idx : 1);
@@ -1274,10 +1274,10 @@ function calc(){
   $("tdee").textContent=Math.round(tdee).toLocaleString();
 
   const effPPerKg = (w>0)? (protein_g/w) : pFactor;
-  const effNote = (Math.abs(effPPerKg - pFactor) > 0.05) ? `｜実効p≈${effPPerKg.toFixed(2)}g/kg` : "";
-  $("bmiClassTxt").textContent =
-    `BMI区分：${classText(bmi)}｜p係数=${pFactor.toFixed(2)}g/kg（f:p=${fpr}）${effNote}｜目標E≈${Ekg.toFixed(1)}kcal/kg｜日別補正×${dayF.toFixed(2)}｜目標補正×${gF.toFixed(2)}`;
-
+const effNote = `｜実効p≈${effPPerKg.toFixed(2)}g/kg`;
+$("bmiClassTxt").textContent =
+  `BMI区分：${classText(bmi)}${effNote}｜目標E≈${Ekg.toFixed(1)}kcal/kg｜日別補正×${dayF.toFixed(2)}｜目標補正×${gF.toFixed(2)}`;
+  
   $("dietLabel").textContent =
     diet==="Carnivore" ? "カーニボア" :
     diet==="Ketovore" ? "ケトボア" :
